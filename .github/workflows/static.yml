@@ -1,43 +1,102 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+<!DOCTYPE html>
+<html lang="hi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Binance Futures Breakout Scanner</title>
+<style>
+:root{--bg:#0e1116;--card:#171b22;--tx:#e6e9ef;--mu:#8b93a1;--g:#1fc77e;--r:#f0475b;--b:#f0b90b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif;padding:10px}
+h1{font-size:17px;margin:0 0 8px}.bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center}
+button,select{background:var(--card);color:var(--tx);border:1px solid #2a303a;border-radius:8px;padding:7px 10px;font-size:13px}
+button.on{background:var(--b);color:#000;border-color:var(--b)}
+#st{color:var(--mu);font-size:12px;margin-bottom:8px}
+.w{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:620px}
+th,td{padding:8px 6px;text-align:right;border-bottom:1px solid #222831;white-space:nowrap}
+th{color:var(--mu);font-weight:500;font-size:12px;position:sticky;top:0;background:var(--bg)}
+th:first-child,td:first-child{text-align:left}
+.up{color:var(--g)}.dn{color:var(--r)}.tag{padding:2px 7px;border-radius:6px;font-size:12px;font-weight:600}
+.t24{background:#26303d;color:#9cc4ff}.t1w{background:#3a2f0b;color:var(--b)}
+.empty{color:var(--mu);padding:20px;text-align:center}
+</style></head><body>
+<h1>Breakout Scanner — Binance USDT Futures</h1>
+<div class="bar">
+ <button id="f_all" class="on" onclick="setF('all')">24h+ (sab)</button>
+ <button id="f_w" onclick="setF('w')">1 Week+</button>
+ <select id="dir" onchange="render()"><option value="both">UP + DOWN</option><option value="up">Sirf UP</option><option value="dn">Sirf DOWN</option></select>
+ <select id="win" onchange="scan()"><option value="1">15 min</option><option value="2">30 min</option><option value="4">60 min</option></select>
+ <button onclick="scan()">Scan ↻</button>
+</div>
+<div id="st">Start ho raha hai…</div>
+<div class="w"><table><thead><tr><th>Coin</th><th>Side</th><th>Price</th><th>Todi hui level</th><th>Beyond %</th><th>Breakout</th><th>Type</th><th>Time</th></tr></thead><tbody id="tb"></tbody></table></div>
+<script>
+const F='https://fapi.binance.com';
+let syms=[],daily={},dayKey='',res=[],busy=false,filt='all';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function jget(u){for(let i=0;i<3;i++){try{const r=await fetch(F+u);if(r.status==429||r.status==418){await sleep(3000*(i+1));continue}if(!r.ok)throw 0;return await r.json()}catch(e){await sleep(600)}}return null}
+async function pool(items,n,fn){let i=0;await Promise.all(Array(n).fill(0).map(async()=>{while(i<items.length){await fn(items[i++])}}))}
+const st=t=>document.getElementById('st').textContent=t;
+function fp(p){return p>=100?p.toFixed(2):p>=1?p.toFixed(4):p.toPrecision(4)}
+function dw(n,max){const s=n>=7?Math.floor(n/7)+'w '+(n%7?n%7+'d':''):n+'d';return s.trim()+(n>=max?'+':'')}
+function setF(f){filt=f;document.getElementById('f_all').className=f=='all'?'on':'';document.getElementById('f_w').className=f=='w'?'on':'';render()}
 
-on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["main"]
-
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
-
-jobs:
-  # Single deploy job since we're just deploying
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # Upload entire repository
-          path: '.'
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+async function scan(){
+ if(busy)return;busy=true;
+ try{
+  if(!syms.length){
+   st('Symbols load ho rahe hain…');
+   const info=await jget('/fapi/v1/exchangeInfo');
+   if(!info){st('Binance se connect nahi ho paya');busy=false;return}
+   syms=info.symbols.filter(s=>s.contractType==='PERPETUAL'&&s.quoteAsset==='USDT'&&s.status==='TRADING').map(s=>s.symbol);
+  }
+  const now=new Date(),key=now.toISOString().slice(0,10);
+  const todayStart=Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate());
+  if(key!==dayKey){daily={};dayKey=key}
+  const need=syms.filter(s=>!daily[s]);
+  let done=0;
+  await pool(need,6,async s=>{
+   const kl=await jget(`/fapi/v1/klines?symbol=${s}&interval=1d&limit=120`);
+   if(kl)daily[s]=kl.filter(k=>k[0]<todayStart).map(k=>[+k[2],+k[3]]);
+   if(++done%20==0)st(`Daily data load: ${done}/${need.length}`);
+  });
+  st('Live prices check ho rahe hain…');
+  const pr=await jget('/fapi/v1/ticker/price');
+  if(!pr){st('Price fetch fail');busy=false;return}
+  const pm={};pr.forEach(x=>pm[x.symbol]=+x.price);
+  const K=+document.getElementById('win').value;
+  const cand=syms.filter(s=>{const d=daily[s];if(!d||!d.length||!pm[s])return false;const l=d[d.length-1];return pm[s]>l[0]*0.995||pm[s]<l[1]*1.005});
+  const out=[];
+  await pool(cand,6,async s=>{
+   const kl=await jget(`/fapi/v1/klines?symbol=${s}&interval=15m&limit=100`);
+   if(!kl||kl.length<K+1)return;
+   const D=daily[s],L=D.length,rec=kl.slice(-K),pri=kl.slice(0,-K).filter(k=>k[0]>=todayStart);
+   const Ph=Math.max(...rec.map(k=>+k[2])),Pl=Math.min(...rec.map(k=>+k[3]));
+   let Th=-Infinity,Tl=Infinity;pri.forEach(k=>{Th=Math.max(Th,+k[2]);Tl=Math.min(Tl,+k[3])});
+   // UP
+   let run=Th,n=0,lvl=0;
+   for(let d=1;d<=L;d++){run=Math.max(run,D[L-d][0]);if(Ph>run){n=d;lvl=run}else break}
+   if(n>=1){const c=rec.find(k=>+k[2]>lvl);out.push({s,side:'up',p:pm[s],lvl,pct:(Ph/lvl-1)*100,n,L,t:c?c[0]:rec[0][0]})}
+   // DOWN
+   run=Tl;n=0;lvl=0;
+   for(let d=1;d<=L;d++){run=Math.min(run,D[L-d][1]);if(Pl<run){n=d;lvl=run}else break}
+   if(n>=1){const c=rec.find(k=>+k[3]<lvl);out.push({s,side:'dn',p:pm[s],lvl,pct:(1-Pl/lvl)*100,n,L,t:c?c[0]:rec[0][0]})}
+  });
+  res=out.sort((a,b)=>b.n-a.n||b.pct-a.pct);
+  st(`${syms.length} coins scan hue • ${cand.length} candidates • ${res.length} breakouts • ${now.toLocaleTimeString()} (auto-refresh 30s)`);
+  render();
+ }catch(e){st('Error: '+e)}
+ busy=false;
+}
+function render(){
+ const dr=document.getElementById('dir').value;
+ const rows=res.filter(r=>(dr=='both'||r.side==dr)&&(filt=='all'||r.n>=7));
+ document.getElementById('tb').innerHTML=rows.length?rows.map(r=>`<tr>
+  <td><b>${r.s.replace('USDT','')}</b></td>
+  <td class="${r.side}">${r.side=='up'?'▲ UP':'▼ DOWN'}</td>
+  <td>${fp(r.p)}</td><td>${fp(r.lvl)}</td>
+  <td class="${r.side}">${r.pct.toFixed(2)}%</td>
+  <td><b>${dw(r.n,r.L)}</b></td>
+  <td><span class="tag ${r.n>=7?'t1w':'t24'}">${r.n>=7?'1W+':'24H+'}</span></td>
+  <td>${new Date(r.t).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</td></tr>`).join('')
+  :'<tr><td colspan="8" class="empty">Abhi koi breakout nahi mila</td></tr>';
+}
+scan();setInterval(scan,30000);
+</script></body></html>
